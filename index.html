@@ -97,6 +97,11 @@
   <div class="sub num" id="toUsd">&nbsp;</div>
 </div>
 
+<div class="box" id="payNote" style="display:none;font-size:13px">
+  <b>Оплата по СБП.</b> <span class="muted">Реквизиты и точную сумму бот пришлёт в чат после создания заявки.
+  После перевода нужно будет отправить скриншот чека.</span>
+</div>
+
 <div class="box info">
   <div><span class="muted">Курс</span><span class="num" id="rateTxt">—</span></div>
   <div><span class="muted">Комиссия</span><span class="num" id="feeTxt"></span></div>
@@ -119,6 +124,7 @@
 <script>
 // Должно совпадать с CURRENCIES в bot/config.py (бот всё равно пересчитывает и проверяет)
 const COINS = {
+  RUB:  { fiat: true, name: 'Рубли', net: 'СБП', min: 1000, color: '#d52b1e', sym: '₽' },
   BTC:  { cg: 'bitcoin',          name: 'Bitcoin',  net: 'Bitcoin',  min: 0.0005, color: '#f7931a', re: /^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}$/ },
   ETH:  { cg: 'ethereum',         name: 'Ethereum', net: 'ERC-20',   min: 0.01,   color: '#627eea', re: /^0x[a-fA-F0-9]{40}$/ },
   USDT: { cg: 'tether',           name: 'Tether',   net: 'TRC-20',   min: 20,     color: '#26a17b', re: /^T[1-9A-HJ-NP-Za-km-z]{33}$/ },
@@ -128,12 +134,15 @@ const COINS = {
 };
 const q = new URLSearchParams(location.search);
 const FEE = parseFloat(q.get('fee') || '1.5');
+const FEE_RUB = parseFloat(q.get('feerub') || '3');
+const RUB_MAX = parseFloat(q.get('rubmax') || '100000');
+const feeOf = t => COINS[t].fiat ? FEE_RUB : FEE;
 
 const tg = window.Telegram && window.Telegram.WebApp;
 const IN_TG = !!(tg && tg.initData !== undefined && tg.platform !== 'unknown');
 const $ = id => document.getElementById(id);
 
-let prices = {}, from = 'USDT', to = 'TON';
+let prices = {}, from = 'RUB', to = 'USDT';
 const fmt = (x, d = 8) => {
   if (!isFinite(x)) return '—';
   const s = x >= 1000 ? x.toFixed(2) : x >= 1 ? x.toFixed(4) : x.toFixed(d);
@@ -141,7 +150,8 @@ const fmt = (x, d = 8) => {
   return i.replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + (d2 ? '.' + d2 : '');
 };
 const usd = x => isFinite(x) ? '≈ $' + x.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) : ' ';
-const icon = t => `<span class="ic" style="background:${COINS[t].color}">${t[0]}</span>`;
+const icon = t => `<span class="ic" style="background:${COINS[t].color}">${COINS[t].sym || t[0]}</span>`;
+const money = (x, t) => COINS[t].fiat ? x.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + ' ₽' : fmt(x) + ' ' + t;
 
 if (tg) {
   tg.ready(); tg.expand();
@@ -156,10 +166,13 @@ const haptic = t => { try { tg.HapticFeedback.selectionChanged(); } catch (e) {}
 
 async function loadPrices() {
   try {
-    const ids = Object.values(COINS).map(c => c.cg).join(',');
-    const r = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`);
+    const ids = Object.values(COINS).filter(c => c.cg).map(c => c.cg).join(',');
+    const r = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd,rub&include_24hr_change=true`);
     const d = await r.json();
-    for (const [t, c] of Object.entries(COINS)) if (d[c.cg]) prices[t] = { usd: d[c.cg].usd, ch: d[c.cg].usd_24h_change || 0 };
+    for (const [t, c] of Object.entries(COINS))
+      if (c.cg && d[c.cg]) prices[t] = { usd: d[c.cg].usd, rub: d[c.cg].rub, ch: d[c.cg].usd_24h_change || 0 };
+    // Цена рубля в долларах — через USDT, как в боте
+    if (d.tether && d.tether.rub) prices.RUB = { usd: d.tether.usd / d.tether.rub, rub: 1, ch: 0 };
     $('upd').textContent = 'обновлено ' + new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
   } catch (e) {
     $('upd').textContent = 'курсы недоступны';
@@ -169,13 +182,13 @@ async function loadPrices() {
 
 function rate() {
   if (!prices[from] || !prices[to]) return NaN;
-  return prices[from].usd / prices[to].usd * (1 - FEE / 100);
+  return prices[from].usd / prices[to].usd * (1 - feeOf(from) / 100);
 }
 
 function state() {
   const amount = parseFloat(($('amount').value || '').replace(',', '.').replace(/\s/g, ''));
   const addr = $('addr').value.trim();
-  const okAmount = amount > 0 && amount >= COINS[from].min;
+  const okAmount = amount > 0 && amount >= COINS[from].min && !(COINS[from].fiat && amount > RUB_MAX);
   const okAddr = COINS[to].re.test(addr);
   return { amount, addr, okAmount, okAddr, ok: okAmount && okAddr && isFinite(rate()) };
 }
@@ -184,18 +197,25 @@ function calc() {
   $('fromBtn').innerHTML = `${icon(from)}${from}<i class="ti ti-chevron-down"></i>`;
   $('toBtn').innerHTML = `${icon(to)}${to}<i class="ti ti-chevron-down"></i>`;
   $('netHint').textContent = 'сеть ' + COINS[to].net;
-  $('feeTxt').textContent = FEE + '%';
+  $('feeTxt').textContent = feeOf(from) + '%';
+  $('swap').style.opacity = COINS[from].fiat ? .35 : 1;
+  $('payNote').style.display = COINS[from].fiat ? 'block' : 'none';
   $('addr').placeholder = `Адрес ${to} (${COINS[to].net})`;
 
   const s = state(), r = rate();
   const out = s.amount > 0 ? s.amount * r : NaN;
   $('out').value = isFinite(out) ? fmt(out) : '';
-  $('rateTxt').textContent = isFinite(r) ? `1 ${from} = ${fmt(r)} ${to}` : '—';
-  $('fromUsd').textContent = prices[from] && s.amount > 0 ? usd(s.amount * prices[from].usd) : ' ';
+  // Для рублей удобнее показывать «1 USDT = 97 ₽», а не «1 ₽ = 0.0103 USDT»
+  $('rateTxt').textContent = !isFinite(r) ? '—'
+    : COINS[from].fiat ? `1 ${to} = ${money(1 / r, from)}` : `1 ${from} = ${fmt(r)} ${to}`;
+  $('fromUsd').textContent = prices[from] && s.amount > 0
+    ? (COINS[from].fiat ? 'оплата по СБП · ' : '') + usd(s.amount * prices[from].usd) : ' ';
   $('toUsd').textContent = prices[to] && isFinite(out) ? usd(out * prices[to].usd) : ' ';
 
   const min = $('minHint');
-  min.textContent = `мин. ${fmt(COINS[from].min)} ${from}`;
+  min.textContent = COINS[from].fiat
+    ? `${money(COINS[from].min, from)} – ${money(RUB_MAX, from)}`
+    : `мин. ${fmt(COINS[from].min)} ${from}`;
   min.classList.toggle('err', s.amount > 0 && !s.okAmount);
 
   const ah = $('addrHint');
@@ -209,10 +229,10 @@ function calc() {
 }
 
 function renderRates() {
-  $('rates').innerHTML = Object.keys(COINS).map(t => {
+  $('rates').innerHTML = Object.keys(COINS).filter(t => !COINS[t].fiat).map(t => {
     const p = prices[t];
     const ch = p ? p.ch : 0;
-    return `<div class="rate">${icon(t)}<div class="name"><b>${t}</b><small>${COINS[t].name}</small></div>
+    return `<div class="rate">${icon(t)}<div class="name"><b>${t}</b><small>${p && p.rub ? money(p.rub, 'RUB') : COINS[t].name}</small></div>
       <div style="text-align:right" class="num">${p ? '$' + fmt(p.usd, 6) : '—'}
       <small style="display:block;font-size:12px;color:${ch >= 0 ? 'var(--good)' : 'var(--danger)'}">${p ? (ch >= 0 ? '+' : '') + ch.toFixed(2) + '%' : ''}</small></div></div>`;
   }).join('');
@@ -225,7 +245,7 @@ function openSheet(side) {
   const other = side === 'from' ? to : from, cur = side === 'from' ? from : to;
   $('sheetTitle').textContent = side === 'from' ? 'Что отдаёте' : 'Что получаете';
   $('sheetList').innerHTML = Object.keys(COINS).map(t =>
-    `<button class="opt ${t === other ? 'dis' : ''}" data-t="${t}">${icon(t)}<div style="flex:1"><b>${t}</b>
+    `<button class="opt ${t === other || (side === 'to' && COINS[t].fiat) ? 'dis' : ''}" data-t="${t}">${icon(t)}<div style="flex:1"><b>${t}</b>
      <div class="muted" style="font-size:12px">${COINS[t].name} · ${COINS[t].net}</div></div>
      ${t === cur ? '<i class="ti ti-check"></i>' : ''}</button>`).join('');
   $('sheet').classList.add('open'); $('sheetBg').classList.add('open');
@@ -239,7 +259,7 @@ $('sheetList').addEventListener('click', e => {
 $('sheetBg').onclick = closeSheet;
 $('fromBtn').onclick = () => openSheet('from');
 $('toBtn').onclick = () => openSheet('to');
-$('swap').onclick = () => { [from, to] = [to, from]; $('addr').value = ''; haptic(); calc(); };
+$('swap').onclick = () => { if (COINS[from].fiat) return; [from, to] = [to, from]; $('addr').value = ''; haptic(); calc(); };
 $('amount').oninput = calc;
 $('addr').oninput = calc;
 $('paste').onclick = async () => {
