@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Обменник</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css">
+<style>
+  :root {
+    --bg: #17171a; --bg2: #0e0e10; --field: #1f1f23; --text: #ececef; --hint: #8a8a93;
+    --accent: #f2f2f4; --accent-text: #0e0e10; --danger: #e5605f; --good: #4fbf7f;
+    --line: #232327; --r: 18px; color-scheme: dark;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg2); color: var(--text);
+    font: 15px/1.38 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  body { padding: 12px 16px calc(100px + env(safe-area-inset-bottom)); min-height: 100vh; }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; padding: 0; }
+  input { font: inherit; color: var(--text); }
+  .num { font-variant-numeric: tabular-nums; }
+  .muted { color: var(--hint); }
+
+  .top { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 14px; }
+  .top b { font-size: 20px; letter-spacing: -.01em; }
+  .pill { font-size: 12px; color: var(--hint); background: var(--bg); padding: 6px 10px; border-radius: 999px; }
+
+  .box { background: var(--bg); border-radius: var(--r); padding: 16px; margin-bottom: 10px; }
+  .lbl { font-size: 13px; color: var(--hint); margin-bottom: 8px; display: flex; justify-content: space-between; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .amount { flex: 1; min-width: 0; background: none; border: 0; outline: 0; font-size: 28px; font-weight: 700;
+    letter-spacing: -.02em; padding: 0; }
+  .amount[readonly] { color: var(--text); }
+  .coin { display: flex; align-items: center; gap: 8px; background: var(--field); padding: 8px 12px 8px 8px;
+    border-radius: 14px; font-weight: 600; white-space: nowrap; }
+  .ic { flex-shrink: 0; }
+  .coin .ic, .rate .ic, .opt .ic { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 12px;
+    font-weight: 800; color: #fff; }
+  .coin i { color: var(--hint); font-size: 16px; }
+  .sub { font-size: 12px; color: var(--hint); margin-top: 8px; }
+  .err { color: var(--danger); }
+
+  .swapwrap { display: flex; justify-content: center; margin: -18px 0 -18px; position: relative; z-index: 2; }
+  .swap { width: 40px; height: 40px; border-radius: 14px; background: var(--field); border: 4px solid var(--bg2);
+    display: grid; place-items: center; font-size: 18px; box-sizing: content-box; }
+
+  .info { display: grid; gap: 8px; font-size: 14px; }
+  .info div { display: flex; justify-content: space-between; }
+
+  .field { width: 100%; background: var(--field); border: 0; outline: 0; border-radius: 12px; padding: 12px 14px;
+    font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  .head { margin: 20px 4px 10px; font-size: 18px; font-weight: 700; }
+  .rate { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .rate:last-child { border-bottom: 0; }
+  .rate .name { flex: 1; } .rate .name small { display: block; color: var(--hint); font-size: 12px; }
+
+  .sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; z-index: 10; }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg); border-radius: 22px 22px 0 0;
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); transform: translateY(100%); transition: transform .22s ease; z-index: 11; }
+  .sheet.open { transform: none; } .sheet-bg.open { display: block; }
+  .sheet h3 { margin: 0 0 10px; font-size: 17px; }
+  .opt { display: flex; align-items: center; gap: 12px; padding: 10px 4px; width: 100%; text-align: left; border-radius: 12px; }
+  .opt.dis { opacity: .35; pointer-events: none; }
+
+  .btn { position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); height: 52px;
+    border-radius: 16px; background: var(--accent); color: var(--accent-text); font-weight: 700; font-size: 16px; }
+  .btn:disabled { opacity: .35; }
+  body.tg .btn { display: none; }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <b>Обменник</b>
+  <span class="pill" id="upd">загрузка курсов…</span>
+</div>
+
+<div class="box">
+  <div class="lbl"><span>Отдаёте</span><span id="minHint"></span></div>
+  <div class="row">
+    <input id="amount" class="amount num" inputmode="decimal" placeholder="0" autocomplete="off">
+    <button class="coin" data-side="from" id="fromBtn"></button>
+  </div>
+  <div class="sub num" id="fromUsd">&nbsp;</div>
+</div>
+
+<div class="swapwrap"><button class="swap" id="swap"><i class="ti ti-arrows-up-down"></i></button></div>
+
+<div class="box">
+  <div class="lbl"><span>Получаете</span><span id="netHint"></span></div>
+  <div class="row">
+    <input id="out" class="amount num" readonly placeholder="0">
+    <button class="coin" data-side="to" id="toBtn"></button>
+  </div>
+  <div class="sub num" id="toUsd">&nbsp;</div>
+</div>
+
+<div class="box info">
+  <div><span class="muted">Курс</span><span class="num" id="rateTxt">—</span></div>
+  <div><span class="muted">Комиссия</span><span class="num" id="feeTxt"></span></div>
+</div>
+
+<div class="box">
+  <div class="lbl"><span>Адрес для получения</span><button class="muted" id="paste"><i class="ti ti-clipboard"></i> вставить</button></div>
+  <input id="addr" class="field" placeholder="Адрес кошелька" autocomplete="off" spellcheck="false">
+  <div class="sub" id="addrHint"></div>
+</div>
+
+<div class="head">Курсы</div>
+<div class="box" id="rates"></div>
+
+<button class="btn" id="go" disabled>Создать заявку</button>
+
+<div class="sheet-bg" id="sheetBg"></div>
+<div class="sheet" id="sheet"><h3 id="sheetTitle"></h3><div id="sheetList"></div></div>
+
+<script>
+// Должно совпадать с CURRENCIES в bot/config.py (бот всё равно пересчитывает и проверяет)
+const COINS = {
+  BTC:  { cg: 'bitcoin',          name: 'Bitcoin',  net: 'Bitcoin',  min: 0.0005, color: '#f7931a', re: /^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}$/ },
+  ETH:  { cg: 'ethereum',         name: 'Ethereum', net: 'ERC-20',   min: 0.01,   color: '#627eea', re: /^0x[a-fA-F0-9]{40}$/ },
+  USDT: { cg: 'tether',           name: 'Tether',   net: 'TRC-20',   min: 20,     color: '#26a17b', re: /^T[1-9A-HJ-NP-Za-km-z]{33}$/ },
+  TON:  { cg: 'the-open-network', name: 'Toncoin',  net: 'TON',      min: 5,      color: '#0098ea', re: /^(EQ|UQ|kQ|0Q)[A-Za-z0-9_-]{46}$/ },
+  LTC:  { cg: 'litecoin',         name: 'Litecoin', net: 'Litecoin', min: 0.2,    color: '#345d9d', re: /^(ltc1|[LM3])[a-zA-HJ-NP-Z0-9]{25,62}$/ },
+  TRX:  { cg: 'tron',             name: 'TRON',     net: 'TRC-20',   min: 100,    color: '#eb0029', re: /^T[1-9A-HJ-NP-Za-km-z]{33}$/ },
+};
+const q = new URLSearchParams(location.search);
+const FEE = parseFloat(q.get('fee') || '1.5');
+
+const tg = window.Telegram && window.Telegram.WebApp;
+const IN_TG = !!(tg && tg.initData !== undefined && tg.platform !== 'unknown');
+const $ = id => document.getElementById(id);
+
+let prices = {}, from = 'USDT', to = 'TON';
+const fmt = (x, d = 8) => {
+  if (!isFinite(x)) return '—';
+  const s = x >= 1000 ? x.toFixed(2) : x >= 1 ? x.toFixed(4) : x.toFixed(d);
+  const [i, d2] = (s.includes('.') ? s.replace(/\.?0+$/, '') : s).split('.');
+  return i.replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + (d2 ? '.' + d2 : '');
+};
+const usd = x => isFinite(x) ? '≈ $' + x.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) : ' ';
+const icon = t => `<span class="ic" style="background:${COINS[t].color}">${t[0]}</span>`;
+
+if (tg) {
+  tg.ready(); tg.expand();
+  try { tg.setHeaderColor('#0e0e10'); tg.setBackgroundColor('#0e0e10'); } catch (e) {}
+  if (IN_TG) {
+    document.body.classList.add('tg');
+    tg.MainButton.setParams({ text: 'Создать заявку', color: '#f2f2f4', text_color: '#0e0e10' });
+    tg.MainButton.onClick(submit);
+  }
+}
+const haptic = t => { try { tg.HapticFeedback.selectionChanged(); } catch (e) {} };
+
+async function loadPrices() {
+  try {
+    const ids = Object.values(COINS).map(c => c.cg).join(',');
+    const r = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`);
+    const d = await r.json();
+    for (const [t, c] of Object.entries(COINS)) if (d[c.cg]) prices[t] = { usd: d[c.cg].usd, ch: d[c.cg].usd_24h_change || 0 };
+    $('upd').textContent = 'обновлено ' + new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  } catch (e) {
+    $('upd').textContent = 'курсы недоступны';
+  }
+  renderRates(); calc();
+}
+
+function rate() {
+  if (!prices[from] || !prices[to]) return NaN;
+  return prices[from].usd / prices[to].usd * (1 - FEE / 100);
+}
+
+function state() {
+  const amount = parseFloat(($('amount').value || '').replace(',', '.').replace(/\s/g, ''));
+  const addr = $('addr').value.trim();
+  const okAmount = amount > 0 && amount >= COINS[from].min;
+  const okAddr = COINS[to].re.test(addr);
+  return { amount, addr, okAmount, okAddr, ok: okAmount && okAddr && isFinite(rate()) };
+}
+
+function calc() {
+  $('fromBtn').innerHTML = `${icon(from)}${from}<i class="ti ti-chevron-down"></i>`;
+  $('toBtn').innerHTML = `${icon(to)}${to}<i class="ti ti-chevron-down"></i>`;
+  $('netHint').textContent = 'сеть ' + COINS[to].net;
+  $('feeTxt').textContent = FEE + '%';
+  $('addr').placeholder = `Адрес ${to} (${COINS[to].net})`;
+
+  const s = state(), r = rate();
+  const out = s.amount > 0 ? s.amount * r : NaN;
+  $('out').value = isFinite(out) ? fmt(out) : '';
+  $('rateTxt').textContent = isFinite(r) ? `1 ${from} = ${fmt(r)} ${to}` : '—';
+  $('fromUsd').textContent = prices[from] && s.amount > 0 ? usd(s.amount * prices[from].usd) : ' ';
+  $('toUsd').textContent = prices[to] && isFinite(out) ? usd(out * prices[to].usd) : ' ';
+
+  const min = $('minHint');
+  min.textContent = `мин. ${fmt(COINS[from].min)} ${from}`;
+  min.classList.toggle('err', s.amount > 0 && !s.okAmount);
+
+  const ah = $('addrHint');
+  ah.textContent = s.addr && !s.okAddr ? `Это не похоже на адрес ${to} в сети ${COINS[to].net}` : '';
+  ah.classList.toggle('err', !!ah.textContent);
+
+  $('go').disabled = !s.ok;
+  if (IN_TG) {
+    if (s.ok) { tg.MainButton.enable(); tg.MainButton.show(); } else tg.MainButton.hide();
+  }
+}
+
+function renderRates() {
+  $('rates').innerHTML = Object.keys(COINS).map(t => {
+    const p = prices[t];
+    const ch = p ? p.ch : 0;
+    return `<div class="rate">${icon(t)}<div class="name"><b>${t}</b><small>${COINS[t].name}</small></div>
+      <div style="text-align:right" class="num">${p ? '$' + fmt(p.usd, 6) : '—'}
+      <small style="display:block;font-size:12px;color:${ch >= 0 ? 'var(--good)' : 'var(--danger)'}">${p ? (ch >= 0 ? '+' : '') + ch.toFixed(2) + '%' : ''}</small></div></div>`;
+  }).join('');
+}
+
+// --- выбор монеты ---
+let sheetSide = null;
+function openSheet(side) {
+  sheetSide = side;
+  const other = side === 'from' ? to : from, cur = side === 'from' ? from : to;
+  $('sheetTitle').textContent = side === 'from' ? 'Что отдаёте' : 'Что получаете';
+  $('sheetList').innerHTML = Object.keys(COINS).map(t =>
+    `<button class="opt ${t === other ? 'dis' : ''}" data-t="${t}">${icon(t)}<div style="flex:1"><b>${t}</b>
+     <div class="muted" style="font-size:12px">${COINS[t].name} · ${COINS[t].net}</div></div>
+     ${t === cur ? '<i class="ti ti-check"></i>' : ''}</button>`).join('');
+  $('sheet').classList.add('open'); $('sheetBg').classList.add('open');
+}
+function closeSheet() { $('sheet').classList.remove('open'); $('sheetBg').classList.remove('open'); }
+$('sheetList').addEventListener('click', e => {
+  const b = e.target.closest('.opt'); if (!b) return;
+  if (sheetSide === 'from') from = b.dataset.t; else { to = b.dataset.t; $('addr').value = ''; }
+  haptic(); closeSheet(); calc();
+});
+$('sheetBg').onclick = closeSheet;
+$('fromBtn').onclick = () => openSheet('from');
+$('toBtn').onclick = () => openSheet('to');
+$('swap').onclick = () => { [from, to] = [to, from]; $('addr').value = ''; haptic(); calc(); };
+$('amount').oninput = calc;
+$('addr').oninput = calc;
+$('paste').onclick = async () => {
+  try {
+    if (tg && tg.readTextFromClipboard && IN_TG) tg.readTextFromClipboard(t => { if (t) { $('addr').value = t.trim(); calc(); } });
+    else { $('addr').value = (await navigator.clipboard.readText()).trim(); calc(); }
+  } catch (e) {}
+};
+$('go').onclick = submit;
+
+function submit() {
+  const s = state();
+  if (!s.ok) return;
+  const payload = JSON.stringify({ v: 1, from, to, amount: s.amount, address: s.addr });
+  if (IN_TG && tg.sendData) {
+    tg.sendData(payload); // бот получит заявку, окно закроется
+  } else {
+    alert('Откройте приложение через кнопку «💱 Обменять» в боте, чтобы создать заявку.\n\n' + payload);
+  }
+}
+
+calc();
+loadPrices();
+setInterval(loadPrices, 60000);
+</script>
+</body>
+</html>
